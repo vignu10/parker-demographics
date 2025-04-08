@@ -2,7 +2,7 @@ import pyspark
 from pyspark import SparkConf
 from pyspark.sql import SparkSession
 import clickhouse_connect
-from pyspark.sql.functions import when, col, lit
+from pyspark.sql.functions import when, col, lit ,substring
 
 
 
@@ -48,7 +48,7 @@ mysql_props = {
 table1_df = spark.read.jdbc(url=mysql_url, table="booking", properties=mysql_props).select(
     "zid", "plateOriginal", "entryTime", "exitTime", "totalAmount", "validatedAmount"
 ).alias("booking")
-table2_df = spark.read.jdbc(url=mysql_url, table="zone", properties=mysql_props).select("zid", "zcode").alias("zone")
+table2_df = spark.read.jdbc(url=mysql_url, table="zone", properties=mysql_props).select("zid", "zcode","name").alias("zone")
 
 #verify data*****************
 # display(mongo_df.limit(50).toPandas())
@@ -69,11 +69,13 @@ joined_df = booking_zone_df.join(
     mongo_df.alias("mongo"),
     (col("zcode") == col("mongo.zid")) &
     (col("plate") == col("mongo.plate")) &
-    (col("entryTime") == col("mongo.entryLprDateTime")) &
-    (col("exitTime") == col("mongo.lprDateTime")),
+    (substring(col("entryTime"), 1, 16) == substring(col("mongo.entryLprDateTime"), 1, 16)) &
+    (substring(col("exitTime"), 1, 16) == substring(col("mongo.lprDateTime"), 1, 16)),
     how="inner"
 ).select(
-    col("zcode").alias("Location"),
+    col("zcode").alias("Location Code"),
+    col("name").alias("Location Name"),
+    col("plate").alias("Plate"),
     col("mongo.make").alias("Make"),
     col("mongo.model").alias("Model"),
     col("mongo.state").alias("State"),
@@ -81,7 +83,6 @@ joined_df = booking_zone_df.join(
     col("mongo.lprDateTime").alias("Exit Time"),
     when(col("totalAmount").isNull(), lit(0)).otherwise(col("totalAmount")).alias("Total Amount"),
     when(col("validatedAmount").isNull(), lit(0)).otherwise(col("validatedAmount")).alias("Validated Amount"),
-    col("plate").alias("Plate")
 )
 
 joined_df.show(20, truncate=False)
@@ -102,3 +103,9 @@ pandas_df = joined_df.toPandas()
 
 # Insert into ClickHouse table
 client.insert_df('merged_data', pandas_df)
+
+
+# **********CSV genaration*****************
+
+joined_df.coalesce(1).write.option("header", True).csv("output/final_data.csv")
+
